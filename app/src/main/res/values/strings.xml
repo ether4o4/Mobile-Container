@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MobileContainer</string>
+    <string name="nav_terminal">Terminal</string>
+    <string name="nav_models">Models</string>
+    <string name="nav_persona">Persona</string>
+    <string name="nav_logs">Logs</string>
+    <string name="run">Run</string>
+    <string name="stop">Stop</string>
+    <string name="rm">Remove</string>
+    <string name="pull">Pull</string>
+    <string name="copy">Copy</string>
+    <string name="apply">Apply</string>
+    <string name="cancel">Cancel</string>
+    <string name="send">Send</string>
+    <string name="inference_running">Inference running</string>
+    <string name="no_models">No models pulled</string>
+</resources>
