@@ -11,7 +11,11 @@ import androidx.compose.ui.graphics.Color
  *
  * No external dependencies.
  */
-class ScreenBuffer(initialRows: Int = 24, initialCols: Int = 80) {
+class ScreenBuffer(
+    initialRows: Int = 24,
+    initialCols: Int = 80,
+    private val maxScrollbackLines: Int = DEFAULT_SCROLLBACK_LINES
+) {
 
     data class Cell(
         var ch: Char = ' ',
@@ -20,6 +24,19 @@ class ScreenBuffer(initialRows: Int = 24, initialCols: Int = 80) {
         var bold: Boolean = false,
         var italic: Boolean = false,
         var underline: Boolean = false
+    )
+
+    /** Immutable copy of the portion of the terminal currently being viewed. */
+    data class ViewportSnapshot(
+        val rows: Int,
+        val cols: Int,
+        val cells: Array<Cell>,
+        val cursorRow: Int,
+        val cursorCol: Int,
+        val cursorVisible: Boolean,
+        val historySize: Int,
+        val startLine: Int,
+        val totalLines: Int
     )
 
     var rows: Int = initialRows
@@ -37,6 +54,7 @@ class ScreenBuffer(initialRows: Int = 24, initialCols: Int = 80) {
     private var scrollBottom: Int = initialRows - 1
 
     private var grid: Array<Cell> = Array(initialRows * initialCols) { Cell() }
+    private val scrollback = ArrayDeque<Array<Cell>>()
 
     // current SGR state
     private var curFg: Int = 7
@@ -50,15 +68,75 @@ class ScreenBuffer(initialRows: Int = 24, initialCols: Int = 80) {
     /** Snapshot of cells for rendering. */
     fun cells(): Array<Cell> = grid
     fun snapshot(): Array<Cell> = Array(grid.size) { grid[it].copy() }
+    fun historySize(): Int = scrollback.size
+    fun totalLineCount(): Int = scrollback.size + rows
+
+    /**
+     * Returns [rows] lines ending [linesFromBottom] lines above the live bottom.
+     * This copy lets Compose render without racing the PTY reader thread.
+     */
+    fun viewport(linesFromBottom: Int = 0): ViewportSnapshot {
+        val total = totalLineCount()
+        val maxOffset = scrollback.size
+        val offset = linesFromBottom.coerceIn(0, maxOffset)
+        val start = (total - rows - offset).coerceAtLeast(0)
+        val history = scrollback.toList()
+        val out = Array(rows * cols) { Cell() }
+        for (viewRow in 0 until rows) {
+            val lineIndex = start + viewRow
+            val source = when {
+                lineIndex < history.size -> history[lineIndex]
+                lineIndex - history.size in 0 until rows -> rowCopy(lineIndex - history.size)
+                else -> null
+            }
+            if (source != null) {
+                for (col in 0 until minOf(cols, source.size)) {
+                    out[viewRow * cols + col] = source[col].copy()
+                }
+            }
+        }
+        val visibleCursorRow = history.size + cursorRow - start
+        val atBottom = offset == 0
+        return ViewportSnapshot(
+            rows = rows,
+            cols = cols,
+            cells = out,
+            cursorRow = visibleCursorRow.coerceIn(0, rows - 1),
+            cursorCol = cursorCol.coerceIn(0, cols - 1),
+            cursorVisible = cursorVisible && atBottom && visibleCursorRow in 0 until rows,
+            historySize = history.size,
+            startLine = start,
+            totalLines = total
+        )
+    }
 
     fun resize(newRows: Int, newCols: Int) {
         val r = newRows.coerceAtLeast(2)
         val c = newCols.coerceAtLeast(8)
+        if (r == rows && c == cols) return
+
+        val oldRows = rows
+        val oldCols = cols
+        val oldGrid = grid
+        val oldCursorRow = cursorRow
+        val linesToKeep = minOf(oldRows, r)
+        val oldStart = if (r < oldRows) {
+            (oldCursorRow - linesToKeep + 1).coerceIn(0, oldRows - linesToKeep)
+        } else {
+            0
+        }
+        val newStart = 0
+
+        if (r < oldRows && scrollTop == 0 && scrollBottom == oldRows - 1) {
+            for (row in 0 until oldStart) appendScrollback(rowCopy(row))
+        }
+
         val ng = Array(r * c) { Cell() }
-        // copy existing content
-        for (row in 0 until minOf(rows, r)) {
-            for (col in 0 until minOf(cols, c)) {
-                ng[row * c + col] = grid[row * cols + col].copy()
+        for (i in 0 until linesToKeep) {
+            val oldRow = oldStart + i
+            val newRow = newStart + i
+            for (col in 0 until minOf(oldCols, c)) {
+                ng[newRow * c + col] = oldGrid[oldRow * oldCols + col].copy()
             }
         }
         grid = ng
@@ -66,8 +144,8 @@ class ScreenBuffer(initialRows: Int = 24, initialCols: Int = 80) {
         cols = c
         scrollTop = 0
         scrollBottom = r - 1
-        if (cursorRow >= r) cursorRow = r - 1
-        if (cursorCol >= c) cursorCol = c - 1
+        cursorRow = (newStart + (oldCursorRow - oldStart)).coerceIn(0, r - 1)
+        cursorCol = cursorCol.coerceIn(0, c - 1)
     }
 
     fun write(bytes: ByteArray) {
@@ -75,7 +153,9 @@ class ScreenBuffer(initialRows: Int = 24, initialCols: Int = 80) {
     }
 
     fun writeText(text: String) {
-        for (c in text) writeChar(c)
+        for (c in text) {
+            if (c.code <= 0xFF) writeByte(c.code) else writeChar(c)
+        }
     }
 
     private fun writeByte(b: Int) {
@@ -128,6 +208,11 @@ class ScreenBuffer(initialRows: Int = 24, initialCols: Int = 80) {
     private fun scrollUp(n: Int) {
         val span = scrollBottom - scrollTop + 1
         val k = minOf(n, span)
+        // Alternate-screen applications often install a partial scroll region;
+        // only normal, whole-screen scrolling belongs in user-visible history.
+        if (scrollTop == 0 && scrollBottom == rows - 1) {
+            for (row in 0 until k) appendScrollback(rowCopy(row))
+        }
         for (row in scrollTop until scrollBottom - k + 1) {
             val src = (row + k) * cols
             val dst = row * cols
@@ -136,6 +221,15 @@ class ScreenBuffer(initialRows: Int = 24, initialCols: Int = 80) {
         for (row in (scrollBottom - k + 1)..scrollBottom) {
             for (col in 0 until cols) grid[row * cols + col] = Cell()
         }
+    }
+
+    private fun rowCopy(row: Int): Array<Cell> =
+        Array(cols) { col -> grid[row * cols + col].copy() }
+
+    private fun appendScrollback(line: Array<Cell>) {
+        if (maxScrollbackLines <= 0) return
+        scrollback.addLast(Array(line.size) { line[it].copy() })
+        while (scrollback.size > maxScrollbackLines) scrollback.removeFirst()
     }
 
     private fun scrollDown(n: Int) {
@@ -304,6 +398,11 @@ class ScreenBuffer(initialRows: Int = 24, initialCols: Int = 80) {
 
     fun clear() {
         for (i in grid.indices) grid[i] = Cell()
+        scrollback.clear()
         cursorRow = 0; cursorCol = 0
+    }
+
+    companion object {
+        const val DEFAULT_SCROLLBACK_LINES = 2_000
     }
 }

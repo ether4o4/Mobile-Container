@@ -43,7 +43,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 fun TerminalScreen() {
     val vm: TerminalViewModel = viewModel()
     val buffer by vm.buffer.collectAsStateWithLifecycle()
-    val tick by vm.tick.collectAsStateWithLifecycle()
+    val scrollbackOffset by vm.scrollbackOffset.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
     val cwd by vm.cwd.collectAsStateWithLifecycle()
 
@@ -85,10 +85,21 @@ fun TerminalScreen() {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             TerminalView(
                 buffer = buffer,
+                pendingInput = input,
                 modifier = Modifier.fillMaxSize(),
-                revision = tick,
-                onTap = { runCatching { focus.requestFocus() } }
+                onTap = { runCatching { focus.requestFocus() } },
+                onResize = vm::resize,
+                onScrollLines = vm::scrollBy,
+                onScrollToBottom = vm::scrollToBottom
             )
+            if (scrollbackOffset > 0) {
+                TextButton(
+                    onClick = vm::scrollToBottom,
+                    modifier = Modifier.align(Alignment.BottomEnd)
+                ) {
+                    Text("↓ Live ($scrollbackOffset)")
+                }
+            }
         }
 
         // control keys row

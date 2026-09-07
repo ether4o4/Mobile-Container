@@ -12,8 +12,8 @@ android {
         applicationId = "com.ether4o4.mobilecontainer"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -34,10 +34,10 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("/data/home/skywork/tools/release.keystore")
-            storePassword = "mobilecontainer"
-            keyAlias = "mckey"
-            keyPassword = "mobilecontainer"
+            storeFile = file(System.getenv("MC_RELEASE_KEYSTORE") ?: "release.keystore")
+            storePassword = System.getenv("MC_RELEASE_STORE_PASSWORD")
+            keyAlias = System.getenv("MC_RELEASE_KEY_ALIAS")
+            keyPassword = System.getenv("MC_RELEASE_KEY_PASSWORD")
         }
     }
 
@@ -93,5 +93,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.11.0")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
+    testImplementation("junit:junit:4.13.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

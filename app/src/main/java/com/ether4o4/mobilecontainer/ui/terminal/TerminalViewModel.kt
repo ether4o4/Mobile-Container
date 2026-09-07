@@ -34,12 +34,12 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
     private val router = ModelRouter(app)
     private val binDir = store.binDir
 
-    private val _buffer = MutableStateFlow(ScreenBuffer(24, 80))
-    val buffer: StateFlow<ScreenBuffer> = _buffer.asStateFlow()
+    private val screenBuffer = ScreenBuffer(24, 80)
+    private val _buffer = MutableStateFlow(screenBuffer.viewport())
+    val buffer: StateFlow<ScreenBuffer.ViewportSnapshot> = _buffer.asStateFlow()
 
-    // tick bumped on every buffer mutation so collectors recompose
-    private val _tick = MutableStateFlow(0L)
-    val tick: StateFlow<Long> = _tick.asStateFlow()
+    private val _scrollbackOffset = MutableStateFlow(0)
+    val scrollbackOffset: StateFlow<Int> = _scrollbackOffset.asStateFlow()
 
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
@@ -65,7 +65,8 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
         )
         val cmd = "/system/bin/sh"
         try {
-            val h = TerminalBridge.spawn(cmd, home, env, 24, 80)
+            val initialViewport = synchronized(screenBuffer) { screenBuffer.viewport() }
+            val h = TerminalBridge.spawn(cmd, home, env, initialViewport.rows, initialViewport.cols)
             handle = h
             alive = true
             _running.value = true
@@ -74,8 +75,10 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
             printBanner()
         } catch (e: Exception) {
             LogStore.add("[terminal] spawn failed: ${e.message}")
-            _buffer.value.writeText("Failed to spawn shell: ${e.message}\r\n")
-            _buffer.value.writeText("Falling back to in-app CLI. Type 'help'.\r\n")
+            mutateBuffer(followBottom = true) {
+                writeText("Failed to spawn shell: ${e.message}\r\n")
+                writeText("Falling back to in-app CLI. Type 'help'.\r\n")
+            }
         }
     }
 
@@ -87,10 +90,7 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
                 if (n < 0) break
                 if (n > 0) {
                     val slice = buf.copyOfRange(0, n)
-                    synchronized(_buffer) {
-                        _buffer.value.write(slice)
-                    }
-                    _tick.value++ // trigger snapshot emit
+                    mutateBuffer(followBottom = true) { write(slice) }
                 }
                 try { Thread.sleep(8) } catch (_: InterruptedException) { break }
             }
@@ -103,11 +103,10 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
     private fun printBanner() {
         val b = StringBuilder()
         b.append("\r\n")
-        b.append("MobileContainer v0.1.0 — on-device model runner\r\n")
+        b.append("MobileContainer v0.1.1 — on-device model runner\r\n")
         b.append("Shell: /system/bin/sh   Home: ").append(_cwd.value).append("\r\n")
         b.append("Type 'help' for app commands.\r\n\r\n")
-        synchronized(_buffer) { _buffer.value.writeText(b.toString()) }
-        _tick.value++
+        mutateBuffer(followBottom = true) { writeText(b.toString()) }
     }
 
     private fun ensureBin() {
@@ -124,12 +123,49 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun resize(rows: Int, cols: Int) {
-        val h = handle ?: return
-        try {
-            TerminalBridge.resize(h, rows, cols)
-            synchronized(_buffer) { _buffer.value.resize(rows, cols) }
-            _tick.value++
-        } catch (_: Throwable) {}
+        val safeRows = rows.coerceAtLeast(2)
+        val safeCols = cols.coerceAtLeast(8)
+        val unchanged = synchronized(screenBuffer) {
+            screenBuffer.rows == safeRows && screenBuffer.cols == safeCols
+        }
+        if (unchanged) return
+        val h = handle
+        if (h != null) runCatching { TerminalBridge.resize(h, safeRows, safeCols) }
+        mutateBuffer { resize(safeRows, safeCols) }
+    }
+
+    /** Positive deltas move into older output; negative deltas move toward live output. */
+    fun scrollBy(lines: Int) {
+        synchronized(screenBuffer) {
+            _scrollbackOffset.value = (_scrollbackOffset.value + lines)
+                .coerceIn(0, screenBuffer.historySize())
+            _buffer.value = screenBuffer.viewport(_scrollbackOffset.value)
+        }
+    }
+
+    fun scrollToBottom() {
+        synchronized(screenBuffer) {
+            _scrollbackOffset.value = 0
+            _buffer.value = screenBuffer.viewport()
+        }
+    }
+
+    private inline fun mutateBuffer(
+        followBottom: Boolean = false,
+        mutation: ScreenBuffer.() -> Unit
+    ) {
+        synchronized(screenBuffer) {
+            val wasAtBottom = _scrollbackOffset.value == 0
+            val oldHistorySize = screenBuffer.historySize()
+            screenBuffer.mutation()
+            val addedHistory = (screenBuffer.historySize() - oldHistorySize).coerceAtLeast(0)
+            _scrollbackOffset.value = when {
+                followBottom && wasAtBottom -> 0
+                else -> (_scrollbackOffset.value + addedHistory)
+                    .coerceIn(0, screenBuffer.historySize())
+            }
+            _buffer.value = screenBuffer.viewport(_scrollbackOffset.value)
+        }
     }
 
     fun sendCtrl(c: Char) {
@@ -173,7 +209,7 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
                 "logs" -> doLogs(args)
                 "ps" -> doPs()
                 "stop" -> doStop()
-                "clear" -> { synchronized(_buffer) { _buffer.value.clear() }; _tick.value++ }
+                "clear" -> mutateBuffer(followBottom = true) { clear() }
                 else -> out("unknown command: $verb  (try 'help')\r\n")
             }
         }
@@ -184,8 +220,7 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun out(text: String) {
-        synchronized(_buffer) { _buffer.value.writeText(text) }
-        _tick.value++
+        mutateBuffer(followBottom = true) { writeText(text) }
     }
 
     private fun doHelp() {
