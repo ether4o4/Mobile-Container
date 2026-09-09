@@ -60,7 +60,7 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
             "TERM=xterm-256color",
             "HOME=$home",
             "PATH=${binDir.absolutePath}:/system/bin:/system/xbin:/vendor/bin",
-            "PS1='mc# '",
+            "PS1='Neversoft 3.11~ '",
             "LANG=en_US.UTF-8"
         )
         val cmd = "/system/bin/sh"
@@ -103,7 +103,7 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
     private fun printBanner() {
         val b = StringBuilder()
         b.append("\r\n")
-        b.append("MobileContainer v0.1.1 — on-device model runner\r\n")
+        b.append("MobileContainer v0.1.2 — on-device model runner\r\n")
         b.append("Shell: /system/bin/sh   Home: ").append(_cwd.value).append("\r\n")
         b.append("Type 'help' for app commands.\r\n\r\n")
         mutateBuffer(followBottom = true) { writeText(b.toString()) }
@@ -216,7 +216,7 @@ class TerminalViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun echoPrompt(line: String) {
-        out("mc# $line\r\n")
+        out("Neversoft 3.11~ $line\r\n")
     }
 
     private fun out(text: String) {

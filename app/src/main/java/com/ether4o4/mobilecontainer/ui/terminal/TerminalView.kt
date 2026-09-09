@@ -28,9 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.sp
-import com.ether4o4.mobilecontainer.ui.theme.Bg
 import com.ether4o4.mobilecontainer.ui.theme.MonoFamily
-import com.ether4o4.mobilecontainer.ui.theme.Text
 import com.ether4o4.mobilecontainer.ui.theme.ansiColors
 import kotlin.math.floor
 
@@ -45,6 +43,8 @@ fun TerminalView(
     buffer: ScreenBuffer.ViewportSnapshot,
     pendingInput: String,
     modifier: Modifier = Modifier,
+    bgColor: Color = Color(0xFF0D0D0F),
+    fgColor: Color = Color(0xFFE6E6E6),
     onTap: () -> Unit = {},
     onResize: (rows: Int, cols: Int) -> Unit = { _, _ -> },
     onScrollLines: (Int) -> Unit = {},
@@ -76,7 +76,7 @@ fun TerminalView(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Bg)
+            .background(bgColor)
             .onSizeChanged { size ->
                 viewportWidth = size.width.toFloat()
                 viewportHeight = size.height.toFloat()
@@ -136,7 +136,7 @@ fun TerminalView(
                         val cell = cells[row * buffer.cols + col]
                         if (cell.bg >= 0) {
                             drawRect(
-                                color = colorFor(cell.bg),
+                                color = colorFor(cell.bg, bgColor),
                                 topLeft = Offset(horizontalOffset + col * charWidth, verticalOffset + row * charHeight),
                                 size = Size(charWidth, charHeight)
                             )
@@ -157,7 +157,7 @@ fun TerminalView(
                             flushSegment(
                                 textMeasurer, text.toString(), row, segmentStart, segmentFg,
                                 segmentBold, segmentItalic, charWidth, charHeight, fontSize,
-                                horizontalOffset, verticalOffset
+                                horizontalOffset, verticalOffset, fgColor
                             )
                             segmentStart = col
                             segmentFg = cell.fg
@@ -171,7 +171,7 @@ fun TerminalView(
                         flushSegment(
                             textMeasurer, text.toString(), row, segmentStart, segmentFg,
                             segmentBold, segmentItalic, charWidth, charHeight, fontSize,
-                            horizontalOffset, verticalOffset
+                            horizontalOffset, verticalOffset, fgColor
                         )
                     }
                 }
@@ -241,10 +241,11 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.flushSegment(
     charHeight: Float,
     fontSize: androidx.compose.ui.unit.TextUnit,
     horizontalOffset: Float,
-    verticalOffset: Float
+    verticalOffset: Float,
+    defaultFg: Color = Color(0xFFE6E6E6)
 ) {
     if (text.isBlank()) return
-    val color = colorFor(fg)
+    val color = colorFor(fg, defaultFg)
     val layout: TextLayoutResult = measurer.measure(
         text = text,
         style = TextStyle(
@@ -263,8 +264,8 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.flushSegment(
     )
 }
 
-private fun colorFor(index: Int): Color =
-    if (index in ansiColors.indices) ansiColors[index] else Text
+private fun colorFor(index: Int, default: Color): Color =
+    if (index in ansiColors.indices) ansiColors[index] else default
 
 internal fun scrollbackDeltaForDragLines(dragLines: Int): Int = dragLines
 

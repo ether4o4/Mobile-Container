@@ -2,6 +2,7 @@ package com.ether4o4.mobilecontainer.ui.terminal
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,6 +26,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -34,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -47,10 +52,16 @@ fun TerminalScreen() {
     val running by vm.running.collectAsStateWithLifecycle()
     val cwd by vm.cwd.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
+    val themeIdx by TerminalThemeStore.themeIndex.collectAsStateWithLifecycle()
+    val theme = TerminalThemeStore.presets[themeIdx]
+    var showThemes by remember { mutableStateOf(false) }
+
     var input by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
+        TerminalThemeStore.init(context)
         vm.start()
     }
 
@@ -62,7 +73,7 @@ fun TerminalScreen() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "mc#",
+                    text = "Neversoft 3.11~",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -73,6 +84,35 @@ fun TerminalScreen() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
                 )
+                Text(
+                    text = theme.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                IconButton(onClick = { showThemes = true }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Filled.Palette, contentDescription = "Shell colors", tint = theme.foreground)
+                }
+                DropdownMenu(expanded = showThemes, onDismissRequest = { showThemes = false }) {
+                    TerminalThemeStore.presets.forEachIndexed { i, t ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .background(t.background)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(t.name, color = t.foreground)
+                                }
+                            },
+                            onClick = {
+                                TerminalThemeStore.select(context, i)
+                                showThemes = false
+                            }
+                        )
+                    }
+                }
                 Text(
                     text = if (running) "● live" else "○ idle",
                     style = MaterialTheme.typography.labelMedium,
@@ -87,6 +127,8 @@ fun TerminalScreen() {
                 buffer = buffer,
                 pendingInput = input,
                 modifier = Modifier.fillMaxSize(),
+                bgColor = theme.background,
+                fgColor = theme.foreground,
                 onTap = { runCatching { focus.requestFocus() } },
                 onResize = vm::resize,
                 onScrollLines = vm::scrollBy,
